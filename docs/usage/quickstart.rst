@@ -64,7 +64,7 @@ Create and send email messages:
     )
 
     # Send using the configured service
-    async for mailer in config.provide_service():
+    async with config.provide_service() as mailer:
         await mailer.send_message(message)
 
 When ``message.from_email`` is omitted, the service uses ``config.from_email`` and
@@ -114,11 +114,12 @@ For use outside Litestar, call ``config.get_service()`` for a one-off service or
 Events and Listeners
 --------------------
 
-Litestar listeners do not support DI, so pass the service explicitly when emitting:
+Event listeners in Litestar execute outside request context and cannot receive
+DI-injected dependencies. Pass the mailer explicitly:
 
 .. code-block:: python
 
-    from litestar import Litestar, Request, get
+    from litestar import Litestar, get
     from litestar.events import listener
     from litestar_email import EmailConfig, EmailMessage, EmailPlugin, EmailService
 
@@ -128,23 +129,18 @@ Litestar listeners do not support DI, so pass the service explicitly when emitti
         from_name="My App",
     )
 
+    @get("/register/{email:str}")
+    async def register(email: str, mailer: EmailService) -> dict[str, str]:
+        # Pass the DI-injected mailer to the event
+        request.app.emit("user.registered", email, mailer=mailer)
+        return {"status": "queued"}
+
     @listener("user.registered")
     async def on_user_registered(email: str, mailer: EmailService) -> None:
-        message = EmailMessage(
-            subject="Welcome!",
-            body="Thanks for signing up.",
-            to=[email],
+        # mailer is passed explicitly from emit(), not injected via DI
+        await mailer.send_message(
+            EmailMessage(subject="Welcome!", body="Thanks for signing up.", to=[email]),
         )
-        await mailer.send_message(message)
-
-    @get("/register/{email:str}")
-    async def register(email: str, request: Request) -> dict[str, str]:
-        request.app.emit(
-            "user.registered",
-            email,
-            mailer=config.get_service(request.app.state),
-        )
-        return {"status": "queued"}
 
     app = Litestar(
         plugins=[EmailPlugin(config=config)],
@@ -153,7 +149,6 @@ Litestar listeners do not support DI, so pass the service explicitly when emitti
 
 You can override the dependency and state keys via ``EmailConfig`` if needed:
 ``email_service_dependency_key="email_service"`` and ``email_service_state_key="email_service"``.
-If you have the plugin instance available, use ``plugin.get_service(request.app.state)``.
 
 Attachments
 -----------

@@ -1,4 +1,4 @@
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -9,11 +9,76 @@ if TYPE_CHECKING:
     from litestar_email.service import EmailService
 
 __all__ = (
+    "AsyncServiceProvider",
     "EmailConfig",
     "ResendConfig",
     "SMTPConfig",
     "SendGridConfig",
 )
+
+
+class AsyncServiceProvider:
+    """Provides EmailService as an async context manager.
+
+    This class enables managed usage of the email service with automatic
+    connection handling:
+
+    Example::
+
+        async with config.provide_service() as mailer:
+            await mailer.send_message(message)
+    """
+
+    __slots__ = ("_config", "_service")
+
+    def __init__(self, config: "EmailConfig") -> None:
+        """Initialize the service provider.
+
+        Args:
+            config: The email configuration.
+        """
+        self._config = config
+        self._service: "EmailService | None" = None
+
+    async def __aenter__(self) -> "EmailService":
+        """Enter the async context and return an EmailService.
+
+        Returns:
+            An EmailService instance with an open backend connection.
+        """
+        from litestar_email.service import EmailService
+
+        self._service = EmailService(self._config)
+        await self._service.__aenter__()
+        return self._service
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: object,
+    ) -> None:
+        """Exit the async context and close the backend connection.
+
+        Args:
+            exc_type: The exception type, if an exception was raised.
+            exc_val: The exception value, if an exception was raised.
+            exc_tb: The exception traceback, if an exception was raised.
+        """
+        if self._service is not None:
+            await self._service.__aexit__(exc_type, exc_val, exc_tb)
+            self._service = None
+
+    async def __aiter__(self) -> AsyncIterator["EmailService"]:
+        """Iterate over the service provider, yielding a single EmailService.
+
+        This method enables compatibility with Litestar's DI system.
+
+        Yields:
+            An EmailService instance with an open backend connection.
+        """
+        async with self as service:
+            yield service
 
 
 @dataclass(slots=True)
@@ -158,7 +223,7 @@ class EmailConfig:
         """
         from litestar.di import Provide
 
-        return {self.email_service_dependency_key: Provide(self.provide_service)}
+        return {self.email_service_dependency_key: Provide(self.provide_service, sync_to_thread=False)}
 
     def get_service(self, state: "State | None" = None) -> "EmailService":
         """Return an EmailService for this configuration.
@@ -198,14 +263,18 @@ class EmailConfig:
 
         return get_backend(backend or self.backend, fail_silently=fail_silently, config=self)
 
-    async def provide_service(self) -> AsyncGenerator["EmailService", None]:
+    def provide_service(self) -> AsyncServiceProvider:
         """Provide an EmailService instance.
 
-        Yields:
-            An EmailService instance that reuses connections within the request.
-        """
-        from litestar_email.service import EmailService
+        Returns a context manager that yields an EmailService with managed
+        connection lifecycle.
 
-        service = EmailService(self)
-        async with service:
-            yield service
+        Example::
+
+            async with config.provide_service() as mailer:
+                await mailer.send_message(message)
+
+        Returns:
+            An AsyncServiceProvider that yields an EmailService instance.
+        """
+        return AsyncServiceProvider(self)

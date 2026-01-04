@@ -32,7 +32,7 @@ class EmailPlugin(InitPluginProtocol):
             )
             app = Litestar(plugins=[EmailPlugin(config=email_config)])
 
-        Dependency injection example::
+        Dependency injection in route handlers::
 
             from litestar import get
             from litestar_email import EmailMessage, EmailService
@@ -43,6 +43,39 @@ class EmailPlugin(InitPluginProtocol):
                     EmailMessage(subject="Welcome!", body="Thanks for signing up.", to=[email]),
                 )
                 return {"status": "sent"}
+
+        Standalone usage with context manager::
+
+            from litestar_email import EmailConfig, EmailMessage
+
+            config = EmailConfig(backend="smtp", from_email="noreply@example.com")
+
+            async with config.provide_service() as mailer:
+                await mailer.send_message(
+                    EmailMessage(subject="Hello", body="World", to=["user@example.com"]),
+                )
+
+        Using with event listeners::
+
+            Note: Event listeners in Litestar execute outside request context and
+            cannot receive DI-injected dependencies. Pass the mailer explicitly.
+
+            from litestar import get
+            from litestar.events import listener
+            from litestar_email import EmailMessage, EmailService
+
+            @get("/register/{email:str}")
+            async def register(email: str, mailer: EmailService) -> dict[str, str]:
+                # Pass the DI-injected mailer to the event
+                request.app.emit("user.registered", email, mailer=mailer)
+                return {"status": "queued"}
+
+            @listener("user.registered")
+            async def on_user_registered(email: str, mailer: EmailService) -> None:
+                # mailer is passed explicitly from emit(), not injected via DI
+                await mailer.send_message(
+                    EmailMessage(subject="Welcome!", body="Thanks!", to=[email]),
+                )
     """
 
     __slots__ = ("_config",)
