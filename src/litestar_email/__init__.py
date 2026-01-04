@@ -11,6 +11,7 @@ from litestar_email.backends import (
     register_backend,
 )
 from litestar_email.config import (
+    AsyncServiceProvider,
     EmailConfig,
     ResendConfig,
     SendGridConfig,
@@ -29,6 +30,7 @@ from litestar_email.plugin import EmailPlugin
 from litestar_email.service import EmailService
 
 __all__ = (
+    "AsyncServiceProvider",
     "BaseEmailBackend",
     "ConsoleBackend",
     "EmailAuthenticationError",
