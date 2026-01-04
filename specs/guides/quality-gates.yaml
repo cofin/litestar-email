@@ -1,0 +1,122 @@
+metadata:
+  version: "2.0"
+  project: "litestar-email"
+  adaptive: true
+  description: "Quality gates adapted to litestar-email project conventions"
+
+implementation_gates:
+  - name: local_tests_pass
+    command: "make test"
+    fallback: "uv run pytest src/tests"
+    required: true
+    adaptive: true
+    description: "All tests must pass before proceeding"
+
+  - name: linting_clean
+    command: "make lint"
+    fallback: "uv run ruff check src/"
+    required: true
+    description: "Zero linting errors allowed (includes pre-commit, mypy, pyright, slotscheck)"
+
+  - name: type_checking_pass
+    command: "make mypy"
+    fallback: "uv run mypy src/litestar_email"
+    required: true
+    adaptive: true
+    description: "Type checking must pass with strict settings"
+
+  - name: slots_check_pass
+    command: "make slotscheck"
+    fallback: "uv run slotscheck src/litestar_email/"
+    required: true
+    description: "All classes must define __slots__"
+
+testing_gates:
+  - name: coverage_threshold
+    threshold: 90
+    scope: "modified_modules"
+    command: "make coverage"
+    adaptive: true
+    description: "Modified modules must achieve 90%+ coverage"
+
+  - name: test_isolation
+    required: true
+    description: "Tests must work in parallel execution (-n auto)"
+
+  - name: async_tests
+    required: true
+    description: "All tests must be async with pytest.mark.anyio"
+
+documentation_gates:
+  - name: anti_pattern_scan
+    adaptive: true
+    rules:
+      - pattern: "from __future__ import annotations"
+        severity: "error"
+        message: "Do not use future annotations; use TYPE_CHECKING and stringified types"
+        files: "src/litestar_email/**/*.py"
+
+      - pattern: "Optional\\["
+        severity: "error"
+        message: "Use T | None (PEP 604) instead of Optional[T]"
+        files: "src/**/*.py"
+
+      - pattern: "from typing import Optional"
+        severity: "error"
+        message: "Remove Optional import; use T | None syntax"
+        files: "src/**/*.py"
+
+      - pattern: "from \\.\\.?"
+        severity: "error"
+        message: "Use absolute imports only; relative imports are banned"
+        files: "src/litestar_email/**/*.py"
+
+      - pattern: "class Test[A-Z]"
+        severity: "warning"
+        message: "Prefer function-based tests over class-based tests"
+        files: "src/tests/**/*.py"
+
+  - name: docstring_presence
+    required: true
+    style: "google"
+    description: "All public classes and methods must have Google-style docstrings"
+
+  - name: slots_presence
+    required: true
+    description: "All classes must define __slots__ for memory efficiency"
+
+  - name: pattern_documentation
+    description: "New patterns must be captured in specs/guides/patterns/"
+    required: false
+
+complexity_thresholds:
+  simple:
+    checkpoints: 6
+    triggers:
+      - "single file change"
+      - "configuration change"
+      - "bug fix"
+      - "documentation update"
+
+  medium:
+    checkpoints: 8
+    triggers:
+      - "new backend implementation"
+      - "API changes"
+      - "2-3 file modifications"
+      - "new test suite"
+
+  complex:
+    checkpoints: 10
+    triggers:
+      - "architecture change"
+      - "new protocol support"
+      - "5+ file modifications"
+      - "breaking changes"
+
+verification_commands:
+  all_gates: "make check-all"
+  tests_only: "make test"
+  lint_only: "make lint"
+  coverage_only: "make coverage"
+  fix_linting: "make fix"

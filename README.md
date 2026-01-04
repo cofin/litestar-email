@@ -1,0 +1,200 @@
+# litestar-email
+
+Email support for Litestar applications. This plugin provides a pluggable email backend
+system for sending transactional emails with support for multiple providers.
+
+## Installation
+
+```bash
+pip install litestar-email
+```
+
+## Usage
+
+```python
+from litestar import Litestar
+from litestar_email import EmailConfig, EmailPlugin
+
+config = EmailConfig(
+    backend="console",  # or "memory", "smtp", "sendgrid", "resend"
+    from_email="noreply@example.com",
+    from_name="My App",
+)
+
+app = Litestar(plugins=[EmailPlugin(config=config)])
+```
+
+### Sending Email
+
+```python
+from litestar_email import EmailMessage
+
+message = EmailMessage(
+    subject="Welcome!",
+    body="Thanks for signing up.",
+    to=["user@example.com"],
+)
+
+async for mailer in config.provide_service():
+    await mailer.send_message(message)
+```
+
+If ``message.from_email`` is omitted, the service uses ``config.from_email`` and
+``config.from_name`` as defaults.
+
+### Dependency Injection
+
+The plugin registers a ``mailer`` dependency for handlers by default:
+
+```python
+from litestar import get
+from litestar_email import EmailMessage, EmailService
+
+@get("/welcome/{email:str}")
+async def send_welcome(email: str, mailer: EmailService) -> dict[str, str]:
+    message = EmailMessage(
+        subject="Welcome!",
+        body="Thanks for signing up.",
+        to=[email],
+    )
+    await mailer.send_message(message)
+    return {"status": "sent"}
+```
+
+This works for both router handlers and controller methods the same way, since the dependency is registered on the app.
+
+If you need a service outside of Litestar (e.g., for a worker), use
+``config.get_service()`` for a one-off instance or ``config.provide_service()``
+for batch sending.
+
+### Events and Listeners
+
+Litestar listeners do not support DI, so pass the service explicitly when emitting:
+
+```python
+from litestar import Litestar, Request, get
+from litestar.events import listener
+from litestar_email import EmailConfig, EmailMessage, EmailPlugin, EmailService
+
+config = EmailConfig(
+    backend="smtp",
+    from_email="noreply@example.com",
+    from_name="My App",
+)
+
+@listener("user.registered")
+async def on_user_registered(email: str, mailer: EmailService) -> None:
+    message = EmailMessage(
+        subject="Welcome!",
+        body="Thanks for signing up.",
+        to=[email],
+    )
+    await mailer.send_message(message)
+
+@get("/register/{email:str}")
+async def register(email: str, request: Request) -> dict[str, str]:
+    request.app.emit(
+        "user.registered",
+        email,
+        mailer=config.get_service(request.app.state),
+    )
+    return {"status": "queued"}
+
+app = Litestar(
+    plugins=[EmailPlugin(config=config)],
+    listeners=[on_user_registered],
+)
+```
+
+You can override the dependency and state keys via ``EmailConfig`` if needed:
+``email_service_dependency_key="email_service"`` and ``email_service_state_key="email_service"``.
+If you have the plugin instance available, use ``plugin.get_service(request.app.state)``.
+
+### Standalone (No Litestar)
+
+Use the config helpers directly without Litestar:
+
+```python
+from litestar_email import EmailConfig, EmailMessage
+
+config = EmailConfig(backend="smtp", from_email="noreply@example.com")
+message = EmailMessage(
+    subject="Hello!",
+    body="This is a standalone send.",
+    to=["user@example.com"],
+)
+
+async for mailer in config.provide_service():
+    await mailer.send_message(message)
+```
+
+For batch sends, use the context helper to reuse the connection:
+
+```python
+async for mailer in config.provide_service():
+    await mailer.send_messages([message1, message2, message3])
+```
+
+### HTML Email
+
+```python
+from litestar_email import EmailMultiAlternatives
+
+message = EmailMultiAlternatives(
+    subject="Welcome!",
+    body="Thanks for signing up.",  # Plain text fallback
+    html_body="<h1>Welcome!</h1><p>Thanks for signing up.</p>",
+    to=["user@example.com"],
+)
+```
+
+## Available Backends
+
+| Backend | Description | Use Case |
+|---------|-------------|----------|
+| `console` | Prints emails to stdout | Development |
+| `memory` | Stores emails in memory | Testing |
+| `smtp` | Async SMTP via aiosmtplib | Production |
+| `sendgrid` | SendGrid HTTP API | Production |
+| `resend` | Resend HTTP API | Production |
+
+## Testing
+
+The `InMemoryBackend` is designed for testing:
+
+```python
+from litestar_email.backends import InMemoryBackend
+
+def test_sends_welcome_email():
+    InMemoryBackend.clear()
+
+    # ... code that sends email ...
+
+    assert len(InMemoryBackend.outbox) == 1
+    assert InMemoryBackend.outbox[0].subject == "Welcome!"
+```
+
+If you need direct backend access in tests, use ``config.get_backend()``:
+
+```python
+from litestar_email import EmailConfig, EmailMessage
+
+config = EmailConfig(backend="memory")
+backend = config.get_backend()
+
+message = EmailMessage(subject="Hello", body="Body", to=["user@example.com"])
+await backend.send_messages([message])
+```
+
+## Development
+
+```bash
+make install    # Install dependencies
+make test       # Run tests
+make lint       # Run linting
+make check-all  # Run all checks
+```
+
+## License
+
+MIT

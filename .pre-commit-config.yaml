@@ -1,0 +1,48 @@
+default_language_version:
+  python: "3"
+repos:
+  - repo: local
+    hooks:
+      - id: no-future-annotations
+        name: Disallow future annotations import
+        entry: python tools/no_future_annotations.py
+        language: python
+        types_or: [python]
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v4.3.0
+    hooks:
+      - id: conventional-pre-commit
+        stages: [commit-msg]
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-ast
+      - id: check-case-conflict
+      - id: check-toml
+      - id: debug-statements
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+      - id: trailing-whitespace
+  - repo: https://github.com/charliermarsh/ruff-pre-commit
+    rev: "v0.14.10"
+    hooks:
+      - id: ruff
+        args: ["--fix"]
+      - id: ruff-format
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.4.1
+    hooks:
+      - id: codespell
+        additional_dependencies:
+          - tomli
+  - repo: https://github.com/python-formate/flake8-dunder-all
+    rev: v0.5.0
+    hooks:
+      - id: ensure-dunder-all
+        exclude: "test*|tools"
+        args: ["--use-tuple"]
+  - repo: https://github.com/ariebovenberg/slotscheck
+    rev: v0.19.1
+    hooks:
+      - id: slotscheck
+        exclude: "docs|.github"
