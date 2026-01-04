@@ -182,7 +182,7 @@ def get_backend(
     if not accepts_kwargs:
         backend_kwargs = {key: value for key, value in backend_kwargs.items() if key in init_signature.parameters}
 
-    return backend_class(**backend_kwargs)  # type: ignore[call-arg]
+    return backend_class(**backend_kwargs)
 
 
 def list_backends() -> list[str]:
