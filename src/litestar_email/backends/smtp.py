@@ -6,24 +6,16 @@ from typing import TYPE_CHECKING
 from litestar_email.backends.base import BaseEmailBackend
 from litestar_email.exceptions import (
     EmailAuthenticationError,
-    EmailBackendError,
     EmailConnectionError,
     EmailDeliveryError,
 )
+from litestar_email.utils.module_loader import ensure_aiosmtplib
 
 if TYPE_CHECKING:
     import aiosmtplib
 
     from litestar_email.config import SMTPConfig
     from litestar_email.message import EmailMessage
-
-# Import guard for optional dependency
-try:
-    import aiosmtplib as aiosmtplib_module
-except ImportError:
-    aiosmtplib_module = None  # type: ignore[assignment]
-
-HAS_AIOSMTPLIB = aiosmtplib_module is not None
 
 __all__ = ("SMTPBackend",)
 
@@ -84,12 +76,10 @@ class SMTPBackend(BaseEmailBackend):
             default_from_email: Default sender email when message.from_email is missing.
             default_from_name: Default sender name when message.from_email has no name.
 
-        Raises:
-            EmailBackendError: If aiosmtplib is not installed.
+        Note:
+            May raise ``MissingDependencyError`` if aiosmtplib is not installed.
         """
-        if not HAS_AIOSMTPLIB:
-            msg = "aiosmtplib is required for SMTP backend. Install with: pip install litestar-email[smtp]"
-            raise EmailBackendError(msg)
+        ensure_aiosmtplib()
 
         super().__init__(
             fail_silently=fail_silently,
@@ -119,8 +109,9 @@ class SMTPBackend(BaseEmailBackend):
         if self._connection is not None:
             return False
 
-        assert aiosmtplib_module is not None  # noqa: S101 # Checked in __init__
-        self._connection = aiosmtplib_module.SMTP(
+        import aiosmtplib
+
+        self._connection = aiosmtplib.SMTP(
             hostname=self._config.host,
             port=self._config.port,
             timeout=self._config.timeout,
@@ -141,12 +132,12 @@ class SMTPBackend(BaseEmailBackend):
                         self._config.username,
                         self._config.password,
                     )
-                except aiosmtplib_module.SMTPAuthenticationError as exc:
+                except aiosmtplib.SMTPAuthenticationError as exc:
                     self._connection = None
                     msg = f"SMTP authentication failed for {self._config.username}"
                     raise EmailAuthenticationError(msg) from exc
 
-        except aiosmtplib_module.SMTPConnectError as exc:
+        except aiosmtplib.SMTPConnectError as exc:
             self._connection = None
             msg = f"Failed to connect to SMTP server {self._config.host}:{self._config.port}"
             if not self.fail_silently:

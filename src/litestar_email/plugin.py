@@ -24,10 +24,10 @@ class EmailPlugin(InitPluginProtocol):
         Basic plugin configuration::
 
             from litestar import Litestar
-            from litestar_email import EmailConfig, EmailPlugin
+            from litestar_email import EmailConfig, EmailPlugin, SMTPConfig
 
             email_config = EmailConfig(
-                backend="smtp",
+                backend=SMTPConfig(host="localhost", port=1025),
                 from_email="noreply@example.com",
             )
             app = Litestar(plugins=[EmailPlugin(config=email_config)])
@@ -46,9 +46,12 @@ class EmailPlugin(InitPluginProtocol):
 
         Standalone usage with context manager::
 
-            from litestar_email import EmailConfig, EmailMessage
+            from litestar_email import EmailConfig, EmailMessage, SMTPConfig
 
-            config = EmailConfig(backend="smtp", from_email="noreply@example.com")
+            config = EmailConfig(
+                backend=SMTPConfig(host="localhost", port=1025),
+                from_email="noreply@example.com",
+            )
 
             async with config.provide_service() as mailer:
                 await mailer.send_message(
@@ -112,19 +115,17 @@ class EmailPlugin(InitPluginProtocol):
 
     def get_backend(
         self,
-        backend: str | None = None,
         fail_silently: bool | None = None,
     ) -> "BaseEmailBackend":
         """Return a backend instance configured for this plugin.
 
         Args:
-            backend: Optional backend name or import path. Defaults to config backend.
             fail_silently: Optional override for fail_silently behavior.
 
         Returns:
             A configured backend instance.
         """
-        return self._config.get_backend(backend=backend, fail_silently=fail_silently)
+        return self._config.get_backend(fail_silently=fail_silently)
 
     def on_app_init(self, app_config: "AppConfig") -> "AppConfig":
         """Handle application initialization.

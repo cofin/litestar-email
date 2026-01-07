@@ -11,6 +11,7 @@ __all__ = (
     "EmailDeliveryError",
     "EmailError",
     "EmailRateLimitError",
+    "MissingDependencyError",
 )
 
 
@@ -131,3 +132,37 @@ class EmailRateLimitError(EmailDeliveryError):
         """
         super().__init__(message)
         self.retry_after = retry_after
+
+
+class MissingDependencyError(EmailError, ImportError):
+    """Raised when a required optional dependency is not installed.
+
+    This exception inherits from both EmailError (for catch-all email
+    error handling) and ImportError (for semantic correctness when
+    a dependency import fails).
+
+    Example:
+        Handle missing dependency errors::
+
+            try:
+                from litestar_email.backends.smtp import SMTPBackend
+                backend = SMTPBackend(config=config)
+            except MissingDependencyError as e:
+                logger.error(f"Missing dependency: {e}")
+                # Install the dependency or use a different backend
+    """
+
+    def __init__(self, package: str, install_package: str | None = None) -> None:
+        """Initialize missing dependency error.
+
+        Args:
+            package: The name of the missing package.
+            install_package: The optional dependency extra name to install.
+                If not provided, defaults to the package name.
+        """
+        install_name = install_package or package
+        super().__init__(
+            f"Package {package!r} is not installed but required. You can install it by running "
+            f"'pip install litestar-email[{install_name}]' to install litestar-email with the required extra "
+            f"or 'pip install {install_name}' to install the package separately"
+        )

@@ -5,24 +5,15 @@ from typing import TYPE_CHECKING, Any
 
 from litestar_email.backends.base import BaseEmailBackend
 from litestar_email.exceptions import (
-    EmailBackendError,
     EmailDeliveryError,
     EmailRateLimitError,
 )
+from litestar_email.utils.module_loader import ensure_httpx
 
 if TYPE_CHECKING:
-    import httpx
-
     from litestar_email.config import SendGridConfig
     from litestar_email.message import EmailMessage
-
-# Import guard for optional dependency
-try:
-    import httpx as httpx_module
-except ImportError:
-    httpx_module = None  # type: ignore[assignment]
-
-HAS_HTTPX = httpx_module is not None
+    from litestar_email.transports.base import HTTPTransport
 
 __all__ = ("SendGridBackend",)
 
@@ -35,10 +26,8 @@ class SendGridBackend(BaseEmailBackend):
     This backend sends emails via SendGrid's HTTP API, which doesn't require
     SMTP ports and works on any hosting plan.
 
-    The backend requires the ``httpx`` package to be installed.
-    Install it with::
-
-        pip install litestar-email[sendgrid]
+    The backend uses httpx by default (bundled with Litestar), but can be
+    configured to use aiohttp or a custom HTTP transport.
 
     Example:
         Basic usage::
@@ -52,10 +41,21 @@ class SendGridBackend(BaseEmailBackend):
             async with backend:
                 await backend.send_messages([message])
 
+        Using aiohttp transport::
+
+            config = EmailConfig(
+                backend="sendgrid",
+                from_email="noreply@example.com",
+                backend_config=SendGridConfig(
+                    api_key="SG.xxx...",
+                    http_transport="aiohttp",
+                ),
+            )
+
     Get your API key at: https://app.sendgrid.com/settings/api_keys
     """
 
-    __slots__ = ("_client", "_config")
+    __slots__ = ("_config", "_transport")
 
     def __init__(
         self,
@@ -72,13 +72,10 @@ class SendGridBackend(BaseEmailBackend):
             default_from_email: Default sender email when message.from_email is missing.
             default_from_name: Default sender name when message.from_email has no name.
 
-        Raises:
-            EmailBackendError: If httpx is not installed.
+        Note:
+            May raise ``MissingDependencyError`` if the configured HTTP transport
+            is not installed.
         """
-        if not HAS_HTTPX:
-            msg = "httpx is required for SendGrid backend. Install with: pip install litestar-email[sendgrid]"
-            raise EmailBackendError(msg)
-
         super().__init__(
             fail_silently=fail_silently,
             default_from_email=default_from_email,
@@ -91,20 +88,26 @@ class SendGridBackend(BaseEmailBackend):
 
             config = SendGridConfig()
 
+        # Check httpx availability if using default transport
+        if config.http_transport == "httpx":
+            ensure_httpx()
+
         self._config = config
-        self._client: "httpx.AsyncClient | None" = None
+        self._transport: "HTTPTransport | None" = None
 
     async def open(self) -> bool:
-        """Open an HTTP client for sending emails.
+        """Open an HTTP transport for sending emails.
 
         Returns:
-            True if a new client was created, False if reusing existing.
+            True if a new transport was created, False if reusing existing.
         """
-        if self._client is not None:
+        if self._transport is not None:
             return False
 
-        assert httpx_module is not None  # noqa: S101 # Checked in __init__
-        self._client = httpx_module.AsyncClient(
+        from litestar_email.transports import get_transport
+
+        self._transport = get_transport(self._config.http_transport)
+        await self._transport.open(
             headers={
                 "Authorization": f"Bearer {self._config.api_key}",
                 "Content-Type": "application/json",
@@ -114,15 +117,15 @@ class SendGridBackend(BaseEmailBackend):
         return True
 
     async def close(self) -> None:
-        """Close the HTTP client."""
-        if self._client is not None:
+        """Close the HTTP transport."""
+        if self._transport is not None:
             try:
-                await self._client.aclose()
+                await self._transport.close()
             except Exception:
                 if not self.fail_silently:
                     raise
             finally:
-                self._client = None
+                self._transport = None
 
     async def send_messages(self, messages: list["EmailMessage"]) -> int:
         """Send messages via SendGrid API.
@@ -167,12 +170,12 @@ class SendGridBackend(BaseEmailBackend):
             message: The email message to send.
 
         Raises:
-            RuntimeError: If client is not initialized.
+            RuntimeError: If transport is not initialized.
             EmailRateLimitError: If rate limited by the API.
             EmailDeliveryError: If the API returns an error.
         """
-        if self._client is None:
-            msg = "SendGrid client not initialized"
+        if self._transport is None:
+            msg = "SendGrid transport not initialized"
             raise RuntimeError(msg)
 
         # Build personalizations (recipients)
@@ -228,17 +231,17 @@ class SendGridBackend(BaseEmailBackend):
                 for filename, attach_content, mimetype in message.attachments
             ]
 
-        response = await self._client.post(SENDGRID_API_URL, json=payload)
+        response = await self._transport.post(SENDGRID_API_URL, json=payload)
 
         # Handle rate limiting
         if response.status_code == 429:
-            retry_after = response.headers.get("Retry-After")
+            retry_after = response.get_header("Retry-After")
             retry_seconds = int(retry_after) if retry_after else None
             msg = "SendGrid API rate limit exceeded"
             raise EmailRateLimitError(msg, retry_after=retry_seconds)
 
         # Handle other errors (SendGrid returns 202 on success)
         if response.status_code >= 400:
-            error_detail = response.text
+            error_detail = await response.text()
             msg = f"SendGrid API error: {response.status_code} - {error_detail}"
             raise EmailDeliveryError(msg)
