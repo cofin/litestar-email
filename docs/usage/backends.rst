@@ -9,19 +9,27 @@ advanced/testing concern.
 Available Backends
 ------------------
 
-+--------------+------------------+--------------------------------+
-| Backend      | Dependency       | Use Case                       |
-+==============+==================+================================+
-| ``console``  | None             | Development (prints to stdout) |
-+--------------+------------------+--------------------------------+
-| ``memory``   | None             | Testing (stores in memory)     |
-+--------------+------------------+--------------------------------+
-| ``smtp``     | ``aiosmtplib``   | Production SMTP servers        |
-+--------------+------------------+--------------------------------+
-| ``resend``   | ``httpx``        | Resend API (modern hosting)    |
-+--------------+------------------+--------------------------------+
-| ``sendgrid`` | ``httpx``        | SendGrid API (enterprise)      |
-+--------------+------------------+--------------------------------+
++--------------+--------------------+--------------------------------+
+| Backend      | Config Class       | Use Case                       |
++==============+====================+================================+
+| ``console``  | None               | Development (prints to stdout) |
++--------------+--------------------+--------------------------------+
+| ``memory``   | None               | Testing (stores in memory)     |
++--------------+--------------------+--------------------------------+
+| ``smtp``     | ``SMTPConfig``     | Production SMTP servers        |
++--------------+--------------------+--------------------------------+
+| ``resend``   | ``ResendConfig``   | Resend API (modern hosting)    |
++--------------+--------------------+--------------------------------+
+| ``sendgrid`` | ``SendGridConfig`` | SendGrid API (enterprise)      |
++--------------+--------------------+--------------------------------+
+| ``mailgun``  | ``MailgunConfig``  | Mailgun API (transactional)    |
++--------------+--------------------+--------------------------------+
+
+.. note::
+
+   API backends (Resend, SendGrid, Mailgun) use ``httpx`` which is bundled with
+   Litestar. No extra installation is needed. Optionally, you can use ``aiohttp``
+   as an alternative transport by installing ``litestar-email[aiohttp]``.
 
 SMTP Backend
 ------------
@@ -45,38 +53,32 @@ SMTP Configuration
 
     # Basic SMTP (no encryption, no auth)
     config = EmailConfig(
-        backend="smtp",
+        backend=SMTPConfig(host="localhost", port=25),
         from_email="noreply@example.com",
-        backend_config=SMTPConfig(
-            host="localhost",
-            port=25,
-        ),
     )
 
     # SMTP with STARTTLS (port 587)
     config = EmailConfig(
-        backend="smtp",
-        from_email="noreply@example.com",
-        backend_config=SMTPConfig(
+        backend=SMTPConfig(
             host="smtp.example.com",
             port=587,
             username="user@example.com",
             password="your-password",
             use_tls=True,  # STARTTLS
         ),
+        from_email="noreply@example.com",
     )
 
     # SMTP with implicit SSL (port 465)
     config = EmailConfig(
-        backend="smtp",
-        from_email="noreply@example.com",
-        backend_config=SMTPConfig(
+        backend=SMTPConfig(
             host="smtp.example.com",
             port=465,
             username="user@example.com",
             password="your-password",
             use_ssl=True,  # Implicit SSL
         ),
+        from_email="noreply@example.com",
     )
 
 SMTPConfig Options
@@ -106,12 +108,9 @@ Resend Backend
 The Resend backend sends emails via `Resend's HTTP API <https://resend.com/>`_.
 This is ideal for modern hosting platforms that block SMTP ports.
 
-Resend Installation
-^^^^^^^^^^^^^^^^^^^
+.. note::
 
-.. code-block:: bash
-
-    pip install litestar-email[resend]
+   No extra installation needed. ``httpx`` is bundled with Litestar.
 
 Resend Configuration
 ^^^^^^^^^^^^^^^^^^^^
@@ -121,11 +120,17 @@ Resend Configuration
     from litestar_email import EmailConfig, ResendConfig
 
     config = EmailConfig(
-        backend="resend",
+        backend=ResendConfig(api_key="re_xxxxxxxxxxxxxxxxxxxxxxxxxx"),
         from_email="noreply@yourdomain.com",
-        backend_config=ResendConfig(
+    )
+
+    # With aiohttp transport (requires litestar-email[aiohttp])
+    config = EmailConfig(
+        backend=ResendConfig(
             api_key="re_xxxxxxxxxxxxxxxxxxxxxxxxxx",
+            http_transport="aiohttp",
         ),
+        from_email="noreply@yourdomain.com",
     )
 
 Get your API key at: https://resend.com/api-keys
@@ -133,13 +138,15 @@ Get your API key at: https://resend.com/api-keys
 ResendConfig Options
 ^^^^^^^^^^^^^^^^^^^^
 
-+-------------+------+---------+-----------------------------+
-| Option      | Type | Default | Description                 |
-+=============+======+=========+=============================+
-| ``api_key`` | str  | ""      | Resend API key (re_xxx)     |
-+-------------+------+---------+-----------------------------+
-| ``timeout`` | int  | 30      | HTTP request timeout        |
-+-------------+------+---------+-----------------------------+
++--------------------+------+---------+------------------------------------+
+| Option             | Type | Default | Description                        |
++====================+======+=========+====================================+
+| ``api_key``        | str  | ""      | Resend API key (re_xxx)            |
++--------------------+------+---------+------------------------------------+
+| ``timeout``        | int  | 30      | HTTP request timeout               |
++--------------------+------+---------+------------------------------------+
+| ``http_transport`` | str  | "httpx" | HTTP transport ("httpx", "aiohttp")|
++--------------------+------+---------+------------------------------------+
 
 SendGrid Backend
 ----------------
@@ -147,12 +154,9 @@ SendGrid Backend
 The SendGrid backend sends emails via `SendGrid's v3 API <https://sendgrid.com/>`_.
 This is suitable for enterprise email delivery at scale.
 
-SendGrid Installation
-^^^^^^^^^^^^^^^^^^^^^
+.. note::
 
-.. code-block:: bash
-
-    pip install litestar-email[sendgrid]
+   No extra installation needed. ``httpx`` is bundled with Litestar.
 
 SendGrid Configuration
 ^^^^^^^^^^^^^^^^^^^^^^
@@ -162,11 +166,8 @@ SendGrid Configuration
     from litestar_email import EmailConfig, SendGridConfig
 
     config = EmailConfig(
-        backend="sendgrid",
+        backend=SendGridConfig(api_key="SG.xxxxxxxxxxxxxxxxxxxxxxxxxx"),
         from_email="noreply@yourdomain.com",
-        backend_config=SendGridConfig(
-            api_key="SG.xxxxxxxxxxxxxxxxxxxxxxxxxx",
-        ),
     )
 
 Get your API key at: https://app.sendgrid.com/settings/api_keys
@@ -174,13 +175,70 @@ Get your API key at: https://app.sendgrid.com/settings/api_keys
 SendGridConfig Options
 ^^^^^^^^^^^^^^^^^^^^^^
 
-+-------------+------+---------+-----------------------------+
-| Option      | Type | Default | Description                 |
-+=============+======+=========+=============================+
-| ``api_key`` | str  | ""      | SendGrid API key (SG.xxx)   |
-+-------------+------+---------+-----------------------------+
-| ``timeout`` | int  | 30      | HTTP request timeout        |
-+-------------+------+---------+-----------------------------+
++--------------------+------+---------+------------------------------------+
+| Option             | Type | Default | Description                        |
++====================+======+=========+====================================+
+| ``api_key``        | str  | ""      | SendGrid API key (SG.xxx)          |
++--------------------+------+---------+------------------------------------+
+| ``timeout``        | int  | 30      | HTTP request timeout               |
++--------------------+------+---------+------------------------------------+
+| ``http_transport`` | str  | "httpx" | HTTP transport ("httpx", "aiohttp")|
++--------------------+------+---------+------------------------------------+
+
+Mailgun Backend
+---------------
+
+The Mailgun backend sends emails via `Mailgun's HTTP API <https://mailgun.com/>`_.
+Mailgun is a popular transactional email service with good deliverability.
+
+.. note::
+
+   No extra installation needed. ``httpx`` is bundled with Litestar.
+
+Mailgun Configuration
+^^^^^^^^^^^^^^^^^^^^^
+
+.. code-block:: python
+
+    from litestar_email import EmailConfig, MailgunConfig
+
+    # US region (default)
+    config = EmailConfig(
+        backend=MailgunConfig(
+            api_key="key-xxxxxxxxxxxxxxxxxxxxxxxxxx",
+            domain="mg.yourdomain.com",
+        ),
+        from_email="noreply@yourdomain.com",
+    )
+
+    # EU region
+    config = EmailConfig(
+        backend=MailgunConfig(
+            api_key="key-xxxxxxxxxxxxxxxxxxxxxxxxxx",
+            domain="mg.yourdomain.com",
+            region="eu",
+        ),
+        from_email="noreply@yourdomain.com",
+    )
+
+Get your API key at: https://app.mailgun.com/settings/api_security
+
+MailgunConfig Options
+^^^^^^^^^^^^^^^^^^^^^
+
++--------------------+------+---------+----------------------------------------+
+| Option             | Type | Default | Description                            |
++====================+======+=========+========================================+
+| ``api_key``        | str  | ""      | Mailgun API key (key-xxx)              |
++--------------------+------+---------+----------------------------------------+
+| ``domain``         | str  | ""      | Mailgun sending domain                 |
++--------------------+------+---------+----------------------------------------+
+| ``region``         | str  | "us"    | API region ("us" or "eu")              |
++--------------------+------+---------+----------------------------------------+
+| ``timeout``        | int  | 30      | HTTP request timeout                   |
++--------------------+------+---------+----------------------------------------+
+| ``http_transport`` | str  | "httpx" | HTTP transport ("httpx", "aiohttp")    |
++--------------------+------+---------+----------------------------------------+
 
 Error Handling
 --------------
@@ -217,12 +275,11 @@ All backends support a ``fail_silently`` option that suppresses exceptions:
 .. code-block:: python
 
     config = EmailConfig(
-        backend="smtp",
+        backend=SMTPConfig(host="localhost", port=1025),
         fail_silently=True,  # Suppress sending errors
-        backend_config=SMTPConfig(host="localhost", port=1025),
     )
 
-    backend = get_backend("smtp", config=config)  # uses config.fail_silently
+    backend = config.get_backend()  # uses config.fail_silently
 
 Connection Pooling
 ------------------
@@ -292,23 +349,18 @@ Use ``config.get_backend("mybackend")`` once it is registered, or use the import
 Optional Dependencies
 ^^^^^^^^^^^^^^^^^^^^^
 
-If your backend uses an optional dependency, follow the import-guard pattern:
+If your backend uses an optional dependency, use the ``MissingDependencyError`` pattern:
 
 .. code-block:: python
 
-    try:
-        import httpx as httpx_module
-    except ImportError:
-        httpx_module = None  # type: ignore[assignment]
-
-    HAS_HTTPX = httpx_module is not None
+    from litestar_email.exceptions import MissingDependencyError
+    from litestar_email.utils.module_loader import _require_dependency
 
     class MyBackend(BaseEmailBackend):
         def __init__(self, ...) -> None:
-            if not HAS_HTTPX:
-                raise EmailBackendError(
-                    "httpx is required. Install with: pip install litestar-email[mybackend]"
-                )
+            # Raises MissingDependencyError with install instructions if missing
+            _require_dependency("mypackage", install_package="mybackend")
+            super().__init__(...)
 
 Contributing a Backend (PR)
 ---------------------------

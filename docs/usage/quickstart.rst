@@ -12,21 +12,23 @@ Install the base package:
 
     pip install litestar-email
 
-For production use, install with your preferred backend:
+For production use with SMTP:
 
 .. code-block:: bash
 
-    # SMTP backend (aiosmtplib)
+    # SMTP backend (requires aiosmtplib)
     pip install litestar-email[smtp]
 
-    # Resend API backend
-    pip install litestar-email[resend]
+    # Alternative HTTP transport (for API backends)
+    pip install litestar-email[aiohttp]
 
-    # SendGrid API backend
-    pip install litestar-email[sendgrid]
-
-    # All backends
+    # All optional dependencies
     pip install litestar-email[all]
+
+.. note::
+
+   API backends (Resend, SendGrid, Mailgun) use ``httpx`` which is bundled with
+   Litestar. No extra installation is needed for these backends.
 
 Basic Setup
 -----------
@@ -121,10 +123,10 @@ DI-injected dependencies. Pass the mailer explicitly:
 
     from litestar import Litestar, get
     from litestar.events import listener
-    from litestar_email import EmailConfig, EmailMessage, EmailPlugin, EmailService
+    from litestar_email import EmailConfig, EmailMessage, EmailPlugin, EmailService, SMTPConfig
 
     config = EmailConfig(
-        backend="smtp",
+        backend=SMTPConfig(host="localhost", port=1025),
         from_email="noreply@example.com",
         from_name="My App",
     )

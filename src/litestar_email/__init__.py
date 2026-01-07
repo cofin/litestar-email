@@ -2,6 +2,7 @@ from litestar_email.backends import (
     BaseEmailBackend,
     ConsoleBackend,
     InMemoryBackend,
+    MailgunBackend,
     ResendBackend,
     SendGridBackend,
     SMTPBackend,
@@ -12,7 +13,9 @@ from litestar_email.backends import (
 )
 from litestar_email.config import (
     AsyncServiceProvider,
+    BackendConfig,
     EmailConfig,
+    MailgunConfig,
     ResendConfig,
     SendGridConfig,
     SMTPConfig,
@@ -24,6 +27,7 @@ from litestar_email.exceptions import (
     EmailDeliveryError,
     EmailError,
     EmailRateLimitError,
+    MissingDependencyError,
 )
 from litestar_email.message import EmailMessage, EmailMultiAlternatives
 from litestar_email.plugin import EmailPlugin
@@ -31,6 +35,7 @@ from litestar_email.service import EmailService
 
 __all__ = (
     "AsyncServiceProvider",
+    "BackendConfig",
     "BaseEmailBackend",
     "ConsoleBackend",
     "EmailAuthenticationError",
@@ -45,6 +50,9 @@ __all__ = (
     "EmailRateLimitError",
     "EmailService",
     "InMemoryBackend",
+    "MailgunBackend",
+    "MailgunConfig",
+    "MissingDependencyError",
     "ResendBackend",
     "ResendConfig",
     "SMTPBackend",

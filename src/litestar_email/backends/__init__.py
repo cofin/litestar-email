@@ -6,12 +6,13 @@ from typing import TYPE_CHECKING, Any
 from litestar_email.backends.base import BaseEmailBackend
 
 if TYPE_CHECKING:
-    from litestar_email.config import EmailConfig
+    from litestar_email.config import BackendConfig, EmailConfig
 
 __all__ = (
     "BaseEmailBackend",
     "ConsoleBackend",
     "InMemoryBackend",
+    "MailgunBackend",
     "ResendBackend",
     "SMTPBackend",
     "SendGridBackend",
@@ -52,34 +53,25 @@ def register_backend(name: str) -> "type[BaseEmailBackend]":
 
 @lru_cache(maxsize=1)
 def _register_builtins() -> None:
-    """Register built-in backends. Called lazily to avoid import cycles."""
+    """Register built-in backends. Called lazily to avoid import cycles.
+
+    All backends can be imported regardless of whether their dependencies
+    are installed. They will raise MissingDependencyError when instantiated
+    if the required packages are not available.
+    """
     from litestar_email.backends.console import ConsoleBackend
+    from litestar_email.backends.mailgun import MailgunBackend
     from litestar_email.backends.memory import InMemoryBackend
+    from litestar_email.backends.resend import ResendBackend
+    from litestar_email.backends.sendgrid import SendGridBackend
+    from litestar_email.backends.smtp import SMTPBackend
 
     _backend_registry.setdefault("console", ConsoleBackend)
     _backend_registry.setdefault("memory", InMemoryBackend)
-
-    # Register optional backends if dependencies are available
-    try:
-        from litestar_email.backends.smtp import SMTPBackend
-
-        _backend_registry.setdefault("smtp", SMTPBackend)
-    except ImportError:
-        pass  # aiosmtplib not installed
-
-    try:
-        from litestar_email.backends.resend import ResendBackend
-
-        _backend_registry.setdefault("resend", ResendBackend)
-    except ImportError:
-        pass  # httpx not installed
-
-    try:
-        from litestar_email.backends.sendgrid import SendGridBackend
-
-        _backend_registry.setdefault("sendgrid", SendGridBackend)
-    except ImportError:
-        pass  # httpx not installed
+    _backend_registry.setdefault("smtp", SMTPBackend)
+    _backend_registry.setdefault("resend", ResendBackend)
+    _backend_registry.setdefault("sendgrid", SendGridBackend)
+    _backend_registry.setdefault("mailgun", MailgunBackend)
 
 
 def get_backend_class(backend_path: str) -> type[BaseEmailBackend]:
@@ -120,23 +112,56 @@ def get_backend_class(backend_path: str) -> type[BaseEmailBackend]:
     return getattr(module, class_name)  # type: ignore[no-any-return]
 
 
+def _get_backend_name_for_config(backend_config: "BackendConfig") -> str:
+    """Map a backend config object to its backend name.
+
+    Args:
+        backend_config: A backend configuration object.
+
+    Returns:
+        The backend name string.
+
+    Raises:
+        ValueError: If the config type is not recognized.
+    """
+    from litestar_email.config import MailgunConfig, ResendConfig, SendGridConfig, SMTPConfig
+
+    config_to_backend: dict[type, str] = {
+        SMTPConfig: "smtp",
+        ResendConfig: "resend",
+        SendGridConfig: "sendgrid",
+        MailgunConfig: "mailgun",
+    }
+
+    for config_type, backend_name in config_to_backend.items():
+        if isinstance(backend_config, config_type):
+            return backend_name
+
+    msg = f"Unknown backend config type: {type(backend_config).__name__}"
+    raise ValueError(msg)
+
+
 def get_backend(
-    backend: str = "console",
+    backend: "str | BackendConfig" = "console",
     fail_silently: bool | None = None,
     config: "EmailConfig | None" = None,
 ) -> BaseEmailBackend:
-    """Get an instantiated backend by name or path.
+    """Get an instantiated backend by name or config object.
 
     Args:
-        backend: The backend short name or full import path.
+        backend: Either a backend short name (e.g., "console", "smtp"), a full
+            import path, or a backend config object (SMTPConfig, ResendConfig, etc.).
         fail_silently: Whether the backend should suppress exceptions. If None,
             uses config.fail_silently when config is provided.
-        config: Optional EmailConfig to extract backend-specific settings from.
-            The ``backend_config`` field from config will be passed to the
-            backend constructor.
+        config: Optional EmailConfig to extract common settings from (from_email,
+            from_name, fail_silently).
 
     Returns:
         An instantiated backend.
+
+    Note:
+        May raise ``MissingDependencyError`` if the backend requires a package
+        that is not installed.
 
     Example:
         Basic usage::
@@ -145,23 +170,33 @@ def get_backend(
             async with backend:
                 await backend.send_messages([message])
 
-        With configuration::
+        With config object::
+
+            backend = get_backend(SMTPConfig(host="localhost", port=1025))
+
+        From EmailConfig::
 
             config = EmailConfig(
-                backend="smtp",
+                backend=ResendConfig(api_key="re_xxx..."),
                 fail_silently=True,
-                backend_config=SMTPConfig(host="localhost", port=1025),
             )
-            backend = get_backend("smtp", config=config)
+            backend = get_backend(config.backend, config=config)
     """
-    backend_class = get_backend_class(backend)
+    # Determine backend class and config from the backend argument
+    backend_config: Any = None
+    if isinstance(backend, str):
+        backend_class = get_backend_class(backend)
+    else:
+        # backend is a config object - determine the backend class from type
+        backend_name = _get_backend_name_for_config(backend)
+        backend_class = get_backend_class(backend_name)
+        backend_config = backend
 
+    # Extract common settings from EmailConfig if provided
     default_from_email: str | None = None
     default_from_name: str | None = None
     resolved_fail_silently = fail_silently if fail_silently is not None else False
-    backend_config: Any = None
     if config is not None:
-        backend_config = config.backend_config
         default_from_email = config.from_email
         default_from_name = config.from_name
         if fail_silently is None:
@@ -196,41 +231,11 @@ def list_backends() -> list[str]:
 
 
 # Re-export backend classes for convenience
+# Backends can be imported regardless of whether dependencies are installed.
+# They raise MissingDependencyError on instantiation if dependencies are missing.
 from litestar_email.backends.console import ConsoleBackend
+from litestar_email.backends.mailgun import MailgunBackend
 from litestar_email.backends.memory import InMemoryBackend
-
-# Conditionally export optional backends
-try:
-    from litestar_email.backends.smtp import SMTPBackend  # pyright: ignore[reportAssignmentType]
-except ImportError:
-
-    class SMTPBackend:  # type: ignore[no-redef]
-        """Placeholder for SMTP backend when aiosmtplib is not installed."""
-
-        def __init__(self, *args: object, **kwargs: object) -> None:
-            msg = "aiosmtplib is required for SMTP backend. Install with: pip install litestar-email[smtp]"
-            raise ImportError(msg)
-
-
-try:
-    from litestar_email.backends.resend import ResendBackend  # pyright: ignore[reportAssignmentType]
-except ImportError:
-
-    class ResendBackend:  # type: ignore[no-redef]
-        """Placeholder for Resend backend when httpx is not installed."""
-
-        def __init__(self, *args: object, **kwargs: object) -> None:
-            msg = "httpx is required for Resend backend. Install with: pip install litestar-email[resend]"
-            raise ImportError(msg)
-
-
-try:
-    from litestar_email.backends.sendgrid import SendGridBackend  # pyright: ignore[reportAssignmentType]
-except ImportError:
-
-    class SendGridBackend:  # type: ignore[no-redef]
-        """Placeholder for SendGrid backend when httpx is not installed."""
-
-        def __init__(self, *args: object, **kwargs: object) -> None:
-            msg = "httpx is required for SendGrid backend. Install with: pip install litestar-email[sendgrid]"
-            raise ImportError(msg)
+from litestar_email.backends.resend import ResendBackend
+from litestar_email.backends.sendgrid import SendGridBackend
+from litestar_email.backends.smtp import SMTPBackend

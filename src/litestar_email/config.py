@@ -7,10 +7,13 @@ if TYPE_CHECKING:
 
     from litestar_email.backends.base import BaseEmailBackend
     from litestar_email.service import EmailService
+    from litestar_email.transports.base import HTTPTransport
 
 __all__ = (
     "AsyncServiceProvider",
+    "BackendConfig",
     "EmailConfig",
+    "MailgunConfig",
     "ResendConfig",
     "SMTPConfig",
     "SendGridConfig",
@@ -124,10 +127,18 @@ class ResendConfig:
         Configure with an API key::
 
             config = ResendConfig(api_key="re_123abc...")
+
+        Use aiohttp transport::
+
+            config = ResendConfig(
+                api_key="re_123abc...",
+                http_transport="aiohttp",
+            )
     """
 
     api_key: str = ""
     timeout: int = 30
+    http_transport: "str | type[HTTPTransport]" = "httpx"
 
 
 @dataclass(slots=True)
@@ -141,10 +152,61 @@ class SendGridConfig:
         Configure with an API key::
 
             config = SendGridConfig(api_key="SG.xxx...")
+
+        Use aiohttp transport::
+
+            config = SendGridConfig(
+                api_key="SG.xxx...",
+                http_transport="aiohttp",
+            )
     """
 
     api_key: str = ""
     timeout: int = 30
+    http_transport: "str | type[HTTPTransport]" = "httpx"
+
+
+@dataclass(slots=True)
+class MailgunConfig:
+    """Configuration for Mailgun API email backend.
+
+    This configuration class defines the settings for the Mailgun API
+    email service (https://mailgun.com).
+
+    Example:
+        Configure with API key and domain::
+
+            config = MailgunConfig(
+                api_key="key-xxx...",
+                domain="mg.example.com",
+            )
+
+        Configure for EU region::
+
+            config = MailgunConfig(
+                api_key="key-xxx...",
+                domain="mg.example.com",
+                region="eu",
+            )
+
+        Use aiohttp transport::
+
+            config = MailgunConfig(
+                api_key="key-xxx...",
+                domain="mg.example.com",
+                http_transport="aiohttp",
+            )
+    """
+
+    api_key: str = ""
+    domain: str = ""
+    region: str = "us"
+    timeout: int = 30
+    http_transport: "str | type[HTTPTransport]" = "httpx"
+
+
+BackendConfig = SMTPConfig | ResendConfig | SendGridConfig | MailgunConfig
+"""Type alias for all backend configuration types."""
 
 
 @dataclass(slots=True)
@@ -166,31 +228,28 @@ class EmailConfig:
         Configuration with SMTP backend::
 
             config = EmailConfig(
-                backend="smtp",
-                from_email="noreply@example.com",
-                backend_config=SMTPConfig(
+                backend=SMTPConfig(
                     host="smtp.example.com",
                     port=587,
                     use_tls=True,
                 ),
+                from_email="noreply@example.com",
             )
 
         Configuration with Resend API backend::
 
             config = EmailConfig(
-                backend="resend",
+                backend=ResendConfig(api_key="re_123abc..."),
                 from_email="noreply@example.com",
-                backend_config=ResendConfig(api_key="re_123abc..."),
             )
     """
 
-    backend: str = "console"
+    backend: str | BackendConfig = "console"
     from_email: str = "noreply@localhost"
     from_name: str = ""
     fail_silently: bool = False
     email_service_dependency_key: str = "mailer"
     email_service_state_key: str = "mailer"
-    backend_config: SMTPConfig | ResendConfig | SendGridConfig | None = None
 
     @property
     def signature_namespace(self) -> dict[str, Any]:
@@ -209,6 +268,7 @@ class EmailConfig:
             "EmailMessage": EmailMessage,
             "EmailMultiAlternatives": EmailMultiAlternatives,
             "EmailService": EmailService,
+            "MailgunConfig": MailgunConfig,
             "ResendConfig": ResendConfig,
             "SMTPConfig": SMTPConfig,
             "SendGridConfig": SendGridConfig,
@@ -247,13 +307,11 @@ class EmailConfig:
 
     def get_backend(
         self,
-        backend: str | None = None,
         fail_silently: bool | None = None,
     ) -> "BaseEmailBackend":
         """Return a backend instance configured for this EmailConfig.
 
         Args:
-            backend: Optional backend name or import path. Defaults to config backend.
             fail_silently: Optional override for fail_silently behavior.
 
         Returns:
@@ -261,7 +319,7 @@ class EmailConfig:
         """
         from litestar_email.backends import get_backend
 
-        return get_backend(backend or self.backend, fail_silently=fail_silently, config=self)
+        return get_backend(self.backend, fail_silently=fail_silently, config=self)
 
     def provide_service(self) -> AsyncServiceProvider:
         """Provide an EmailService instance.

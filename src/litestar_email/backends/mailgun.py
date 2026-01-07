@@ -1,6 +1,5 @@
-"""Resend email backend using the Resend HTTP API."""
+"""Mailgun email backend using the Mailgun HTTP API."""
 
-import base64
 from typing import TYPE_CHECKING, Any
 
 from litestar_email.backends.base import BaseEmailBackend
@@ -11,20 +10,21 @@ from litestar_email.exceptions import (
 from litestar_email.utils.module_loader import ensure_httpx
 
 if TYPE_CHECKING:
-    from litestar_email.config import ResendConfig
+    from litestar_email.config import MailgunConfig
     from litestar_email.message import EmailMessage
     from litestar_email.transports.base import HTTPTransport
 
-__all__ = ("ResendBackend",)
+__all__ = ("MailgunBackend",)
 
-RESEND_API_URL = "https://api.resend.com/emails"
+MAILGUN_US_URL = "https://api.mailgun.net"
+MAILGUN_EU_URL = "https://api.eu.mailgun.net"
 
 
-class ResendBackend(BaseEmailBackend):
-    """Resend email backend using the HTTP API.
+class MailgunBackend(BaseEmailBackend):
+    """Mailgun email backend using the HTTP API.
 
-    This backend sends emails via Resend's HTTP API, which doesn't require
-    SMTP ports and works on any hosting plan.
+    This backend sends emails via Mailgun's HTTP API, supporting both
+    US and EU regional endpoints for GDPR compliance.
 
     The backend uses httpx by default (bundled with Litestar), but can be
     configured to use aiohttp or a custom HTTP transport.
@@ -33,41 +33,49 @@ class ResendBackend(BaseEmailBackend):
         Basic usage::
 
             config = EmailConfig(
-                backend="resend",
+                backend="mailgun",
                 from_email="noreply@example.com",
-                backend_config=ResendConfig(api_key="re_xxx..."),
+                backend_config=MailgunConfig(
+                    api_key="key-xxx...",
+                    domain="mg.example.com",
+                ),
             )
-            backend = get_backend("resend", config=config)
+            backend = get_backend("mailgun", config=config)
             async with backend:
                 await backend.send_messages([message])
 
-        Using aiohttp transport::
+        Using EU region::
 
-            config = EmailConfig(
-                backend="resend",
-                from_email="noreply@example.com",
-                backend_config=ResendConfig(
-                    api_key="re_xxx...",
-                    http_transport="aiohttp",
-                ),
+            backend_config=MailgunConfig(
+                api_key="key-xxx...",
+                domain="mg.example.com",
+                region="eu",
             )
 
-    Get your API key at: https://resend.com/api-keys
+        Using aiohttp transport::
+
+            backend_config=MailgunConfig(
+                api_key="key-xxx...",
+                domain="mg.example.com",
+                http_transport="aiohttp",
+            )
+
+    Get your API key at: https://app.mailgun.com/settings/api_keys
     """
 
     __slots__ = ("_config", "_transport")
 
     def __init__(
         self,
-        config: "ResendConfig | None" = None,
+        config: "MailgunConfig | None" = None,
         fail_silently: bool = False,
         default_from_email: str | None = None,
         default_from_name: str | None = None,
     ) -> None:
-        """Initialize Resend backend.
+        """Initialize Mailgun backend.
 
         Args:
-            config: Resend configuration settings. If None, defaults are used.
+            config: Mailgun configuration settings. If None, defaults are used.
             fail_silently: If True, suppress exceptions during send.
             default_from_email: Default sender email when message.from_email is missing.
             default_from_name: Default sender name when message.from_email has no name.
@@ -84,9 +92,9 @@ class ResendBackend(BaseEmailBackend):
 
         # Use provided config or create default
         if config is None:
-            from litestar_email.config import ResendConfig
+            from litestar_email.config import MailgunConfig
 
-            config = ResendConfig()
+            config = MailgunConfig()
 
         # Check httpx availability if using default transport
         if config.http_transport == "httpx":
@@ -106,12 +114,13 @@ class ResendBackend(BaseEmailBackend):
 
         from litestar_email.transports import get_transport
 
+        # Select base URL based on region
+        base_url = MAILGUN_EU_URL if self._config.region == "eu" else MAILGUN_US_URL
+
         self._transport = get_transport(self._config.http_transport)
         await self._transport.open(
-            headers={
-                "Authorization": f"Bearer {self._config.api_key}",
-                "Content-Type": "application/json",
-            },
+            auth=("api", self._config.api_key),
+            base_url=base_url,
             timeout=float(self._config.timeout),
         )
         return True
@@ -128,7 +137,7 @@ class ResendBackend(BaseEmailBackend):
                 self._transport = None
 
     async def send_messages(self, messages: list["EmailMessage"]) -> int:
-        """Send messages via Resend API.
+        """Send messages via Mailgun API.
 
         Args:
             messages: List of EmailMessage instances to send.
@@ -156,7 +165,7 @@ class ResendBackend(BaseEmailBackend):
                     raise
                 except Exception as exc:
                     if not self.fail_silently:
-                        msg = f"Failed to send email to {message.to} via Resend"
+                        msg = f"Failed to send email to {message.to} via Mailgun"
                         raise EmailDeliveryError(msg) from exc
             return num_sent
         finally:
@@ -164,7 +173,7 @@ class ResendBackend(BaseEmailBackend):
                 await self.close()
 
     async def _send_message(self, message: "EmailMessage") -> None:
-        """Send a single message via Resend API.
+        """Send a single message via Mailgun API.
 
         Args:
             message: The email message to send.
@@ -175,61 +184,63 @@ class ResendBackend(BaseEmailBackend):
             EmailDeliveryError: If the API returns an error.
         """
         if self._transport is None:
-            msg = "Resend transport not initialized"
+            msg = "Mailgun transport not initialized"
             raise RuntimeError(msg)
 
-        # Build the request payload
+        # Build the request payload as form data
         _, _, from_formatted = self._resolve_from(message)
-        payload: dict[str, Any] = {
+        data: dict[str, Any] = {
             "from": from_formatted,
-            "to": message.to,
+            "to": ",".join(message.to),
             "subject": message.subject,
         }
 
         # Add text body
         if message.body:
-            payload["text"] = message.body
+            data["text"] = message.body
 
         # Add HTML alternative if present
         for content, mimetype in message.alternatives:
             if mimetype == "text/html":
-                payload["html"] = content
+                data["html"] = content
                 break
 
         # Add optional fields
         if message.cc:
-            payload["cc"] = message.cc
+            data["cc"] = ",".join(message.cc)
         if message.bcc:
-            payload["bcc"] = message.bcc
+            data["bcc"] = ",".join(message.bcc)
         if message.reply_to:
-            # Resend accepts string or list for reply_to
-            payload["reply_to"] = message.reply_to[0] if len(message.reply_to) == 1 else message.reply_to
+            # Mailgun uses h:Reply-To header format
+            data["h:Reply-To"] = message.reply_to[0]
 
-        # Add custom headers
+        # Add custom headers with h: prefix
         if message.headers:
-            payload["headers"] = message.headers
+            for key, value in message.headers.items():
+                data[f"h:{key}"] = value
 
-        # Add attachments with base64 encoding
+        # Build files list for attachments
+        files: list[tuple[str, tuple[str, bytes, str]]] | None = None
         if message.attachments:
-            payload["attachments"] = [
-                {
-                    "filename": filename,
-                    "content": base64.b64encode(content).decode("ascii"),
-                }
-                for filename, content, _mimetype in message.attachments
+            files = [
+                ("attachment", (filename, content, mimetype)) for filename, content, mimetype in message.attachments
             ]
 
-        response = await self._transport.post(RESEND_API_URL, json=payload)
+        response = await self._transport.post(
+            f"/v3/{self._config.domain}/messages",
+            data=data,
+            files=files,
+        )
 
         # Handle rate limiting
         if response.status_code == 429:
             retry_after = response.get_header("Retry-After")
             retry_seconds = int(retry_after) if retry_after else None
-            msg = "Resend API rate limit exceeded"
+            msg = "Mailgun API rate limit exceeded"
             raise EmailRateLimitError(msg, retry_after=retry_seconds)
 
-        # Handle other errors
+        # Handle other errors (Mailgun returns 200 on success)
         if response.status_code >= 400:
             error_detail = await response.text()
-            msg = f"Resend API error: {response.status_code} - {error_detail}"
+            msg = f"Mailgun API error: {response.status_code} - {error_detail}"
             raise EmailDeliveryError(msg)

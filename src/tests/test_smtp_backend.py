@@ -2,24 +2,26 @@
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import aiosmtplib
 import pytest
+
+from litestar_email.utils import dependencies
 
 pytestmark = pytest.mark.anyio
 
 
-def test_smtp_backend_requires_aiosmtplib() -> None:
+def test_smtp_backend_requires_aiosmtplib(monkeypatch: pytest.MonkeyPatch) -> None:
     """Test that SMTPBackend raises if aiosmtplib is not installed."""
-    from litestar_email.backends import smtp as smtp_module
-    from litestar_email.exceptions import EmailBackendError
+    from litestar_email.exceptions import MissingDependencyError
 
-    original = smtp_module.HAS_AIOSMTPLIB
-    smtp_module.HAS_AIOSMTPLIB = False
+    # Simulate aiosmtplib not being installed
+    monkeypatch.setattr(dependencies, "_dependency_cache", {"aiosmtplib": False})
 
-    try:
-        with pytest.raises(EmailBackendError, match="aiosmtplib is required"):
-            smtp_module.SMTPBackend()
-    finally:
-        smtp_module.HAS_AIOSMTPLIB = original
+    # Need to reimport after patching the cache
+    from litestar_email.backends.smtp import SMTPBackend
+
+    with pytest.raises(MissingDependencyError, match="aiosmtplib"):
+        SMTPBackend()
 
 
 def test_smtp_backend_default_config() -> None:
@@ -166,16 +168,16 @@ async def test_smtp_backend_with_mock_connection() -> None:
 
 async def test_smtp_backend_connection_error_silent() -> None:
     """Test connection error is suppressed when fail_silently=True."""
-    from litestar_email.backends.smtp import SMTPBackend, aiosmtplib_module
+    from litestar_email.backends.smtp import SMTPBackend
     from litestar_email.config import SMTPConfig
 
     config = SMTPConfig(host="invalid.host", port=9999)
     backend = SMTPBackend(config=config, fail_silently=True)
 
     # Mock the SMTP class to raise an error
-    with patch.object(aiosmtplib_module, "SMTP") as mock_smtp_class:
+    with patch("aiosmtplib.SMTP") as mock_smtp_class:
         mock_smtp = AsyncMock()
-        mock_smtp.connect = AsyncMock(side_effect=aiosmtplib_module.SMTPConnectError("Connection failed"))
+        mock_smtp.connect = AsyncMock(side_effect=aiosmtplib.SMTPConnectError("Connection failed"))
         mock_smtp_class.return_value = mock_smtp
 
         result = await backend.open()
@@ -185,16 +187,16 @@ async def test_smtp_backend_connection_error_silent() -> None:
 
 async def test_smtp_backend_connection_error_raises() -> None:
     """Test connection error raises when fail_silently=False."""
-    from litestar_email.backends.smtp import SMTPBackend, aiosmtplib_module
+    from litestar_email.backends.smtp import SMTPBackend
     from litestar_email.config import SMTPConfig
     from litestar_email.exceptions import EmailConnectionError
 
     config = SMTPConfig(host="invalid.host", port=9999)
     backend = SMTPBackend(config=config, fail_silently=False)
 
-    with patch.object(aiosmtplib_module, "SMTP") as mock_smtp_class:
+    with patch("aiosmtplib.SMTP") as mock_smtp_class:
         mock_smtp = AsyncMock()
-        mock_smtp.connect = AsyncMock(side_effect=aiosmtplib_module.SMTPConnectError("Connection failed"))
+        mock_smtp.connect = AsyncMock(side_effect=aiosmtplib.SMTPConnectError("Connection failed"))
         mock_smtp_class.return_value = mock_smtp
 
         with pytest.raises(EmailConnectionError, match="Failed to connect"):
@@ -203,7 +205,7 @@ async def test_smtp_backend_connection_error_raises() -> None:
 
 async def test_smtp_backend_auth_error_raises() -> None:
     """Test authentication error raises proper exception."""
-    from litestar_email.backends.smtp import SMTPBackend, aiosmtplib_module
+    from litestar_email.backends.smtp import SMTPBackend
     from litestar_email.config import SMTPConfig
     from litestar_email.exceptions import EmailAuthenticationError
 
@@ -215,11 +217,11 @@ async def test_smtp_backend_auth_error_raises() -> None:
     )
     backend = SMTPBackend(config=config, fail_silently=False)
 
-    with patch.object(aiosmtplib_module, "SMTP") as mock_smtp_class:
+    with patch("aiosmtplib.SMTP") as mock_smtp_class:
         mock_smtp = AsyncMock()
         mock_smtp.connect = AsyncMock()
         mock_smtp.starttls = AsyncMock()
-        mock_smtp.login = AsyncMock(side_effect=aiosmtplib_module.SMTPAuthenticationError(535, "Auth failed"))
+        mock_smtp.login = AsyncMock(side_effect=aiosmtplib.SMTPAuthenticationError(535, "Auth failed"))
         mock_smtp_class.return_value = mock_smtp
 
         with pytest.raises(EmailAuthenticationError, match="authentication failed"):
@@ -257,13 +259,13 @@ async def test_smtp_backend_close_error_silent() -> None:
 async def test_smtp_backend_send_messages_with_connection_management() -> None:
     """Test send_messages properly manages connection lifecycle."""
     from litestar_email import EmailMessage
-    from litestar_email.backends.smtp import SMTPBackend, aiosmtplib_module
+    from litestar_email.backends.smtp import SMTPBackend
     from litestar_email.config import SMTPConfig
 
     config = SMTPConfig(host="localhost", port=1025)
     backend = SMTPBackend(config=config)
 
-    with patch.object(aiosmtplib_module, "SMTP") as mock_smtp_class:
+    with patch("aiosmtplib.SMTP") as mock_smtp_class:
         mock_smtp = AsyncMock()
         mock_smtp.connect = AsyncMock()
         mock_smtp.send_message = AsyncMock()
@@ -288,14 +290,14 @@ async def test_smtp_backend_send_messages_with_connection_management() -> None:
 async def test_smtp_backend_delivery_error_raises() -> None:
     """Test delivery error raises EmailDeliveryError."""
     from litestar_email import EmailMessage
-    from litestar_email.backends.smtp import SMTPBackend, aiosmtplib_module
+    from litestar_email.backends.smtp import SMTPBackend
     from litestar_email.config import SMTPConfig
     from litestar_email.exceptions import EmailDeliveryError
 
     config = SMTPConfig(host="localhost", port=1025)
     backend = SMTPBackend(config=config, fail_silently=False)
 
-    with patch.object(aiosmtplib_module, "SMTP") as mock_smtp_class:
+    with patch("aiosmtplib.SMTP") as mock_smtp_class:
         mock_smtp = AsyncMock()
         mock_smtp.connect = AsyncMock()
         mock_smtp.send_message = AsyncMock(side_effect=Exception("Send failed"))
@@ -314,7 +316,7 @@ async def test_smtp_backend_delivery_error_raises() -> None:
 
 async def test_smtp_backend_starttls_upgrade() -> None:
     """Test STARTTLS is called when use_tls=True and use_ssl=False."""
-    from litestar_email.backends.smtp import SMTPBackend, aiosmtplib_module
+    from litestar_email.backends.smtp import SMTPBackend
     from litestar_email.config import SMTPConfig
 
     config = SMTPConfig(
@@ -325,7 +327,7 @@ async def test_smtp_backend_starttls_upgrade() -> None:
     )
     backend = SMTPBackend(config=config)
 
-    with patch.object(aiosmtplib_module, "SMTP") as mock_smtp_class:
+    with patch("aiosmtplib.SMTP") as mock_smtp_class:
         mock_smtp = AsyncMock()
         mock_smtp.connect = AsyncMock()
         mock_smtp.starttls = AsyncMock()
